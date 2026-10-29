@@ -1,0 +1,118 @@
+# infra/lima/homelab.yaml
+# VM Ubuntu LTS (ARM64) qui fait tourner Docker pour le homelab.
+#
+# Création :   limactl start --name=homelab lima/homelab.yaml
+# Au boot :    limactl autostart enable --condition=boot homelab
+# Shell :      limactl shell homelab
+#
+# Les scripts de "provision" sont rejoués à chaque démarrage de la VM :
+# ils sont écrits pour être idempotents (rien n'est refait s'il est déjà en place).
+
+minimumLimaVersion: 2.2.0
+
+# Image Ubuntu LTS officielle (26.04 aujourd'hui), sans les réglages par défaut de Lima.
+base: template:_images/ubuntu-lts
+
+# Virtualisation native d'Apple (Virtualization.framework).
+vmType: vz
+
+# Mac mini M1 à 8 Go : 5 Go pour la VM, le reste pour macOS.
+cpus: 6
+memory: 5GiB
+disk: 100GiB  # alloué au fil de l'eau, pas d'un coup
+
+# Isolation : aucun dossier du Mac n'est visible dans la VM.
+mounts: []
+
+# Docker est installé à la main (dépôt officiel), pas le containerd de Lima.
+containerd:
+  system: false
+  user: false
+
+# Lima transfère par défaut les ports ouverts dans la VM vers le localhost du Mac.
+# Inutile ici : tout passe par Cloudflare Tunnel (public) et Tailscale (admin).
+portForwards:
+  - guestPortRange: [1, 65535]
+    ignore: true
+
+provision:
+  # ---------------------------------------------------------------------------
+  # Système (root)
+  # ---------------------------------------------------------------------------
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+      export DEBIAN_FRONTEND=noninteractive
+
+      # --- Swap de 2 Go : filet de sécurité, ne doit pas servir en temps normal
+      if [ ! -f /swapfile ]; then
+        fallocate -l 2G /swapfile
+        chmod 600 /swapfile
+        mkswap /swapfile
+        echo '/swapfile none swap sw 0 0' >> /etc/fstab
+      fi
+      swapon --show | grep -q /swapfile || swapon /swapfile
+      echo 'vm.swappiness=10' > /etc/sysctl.d/99-homelab.conf
+      sysctl --system > /dev/null
+
+      # --- Mises à jour de sécurité automatiques
+      apt-get install -y unattended-upgrades
+
+      # --- Docker Engine depuis le dépôt officiel (mode classique, pas rootless)
+      if ! command -v docker > /dev/null; then
+        apt-get update
+        apt-get install -y ca-certificates curl
+        install -m 0755 -d /etc/apt/keyrings
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+        chmod a+r /etc/apt/keyrings/docker.asc
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+          > /etc/apt/sources.list.d/docker.list
+        apt-get update
+        apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      fi
+      usermod -aG docker "{{.User}}"
+
+      # --- Logs Docker limités (sinon le disque finit par se remplir)
+      if [ ! -f /etc/docker/daemon.json ]; then
+        cat > /etc/docker/daemon.json <<'EOF'
+      {
+        "log-driver": "local",
+        "log-opts": { "max-size": "10m", "max-file": "3" }
+      }
+      EOF
+        systemctl restart docker
+      fi
+      systemctl enable --now docker
+
+      # --- Tailscale (la connexion, `tailscale up`, se fait à la main une seule fois)
+      if ! command -v tailscale > /dev/null; then
+        curl -fsSL https://tailscale.com/install.sh | sh
+      fi
+
+      # --- Pare-feu : tout bloquer en entrée, sauf SSH
+      #     - via Tailscale (ton SSH quotidien et les déploiements) ;
+      #     - depuis le réseau interne de Lima (192.168.5.0/24), sinon
+      #       `limactl shell`, ton accès de secours depuis macOS, ne marche plus.
+      #     Aucun port Docker n'est publié, donc rien ne contourne ufw.
+      apt-get install -y ufw
+      ufw default deny incoming
+      ufw default allow outgoing
+      ufw allow in on tailscale0 to any port 22 proto tcp
+      ufw allow from 192.168.5.0/24 to any port 22 proto tcp
+      ufw --force enable
+
+  # ---------------------------------------------------------------------------
+  # Utilisateur
+  # ---------------------------------------------------------------------------
+  - mode: user
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+
+      # --- Ta clé SSH publique (celle du MacBook), pour `ssh homelab-vm` via Tailscale.
+      #     Une clé publique n'est pas un secret : elle peut rester dans le repo.
+      PUBKEY='grep -qxF "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILv2/hAaTHpR/ji4UJ5QLTm7RRLEzaeKuFENNjG9z7WT homelab-admin" ~/.ssh/authorized_keys || echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILv2/hAaTHpR/ji4UJ5QLTm7RRLEzaeKuFENNjG9z7WT homelab-admin" >> ~/.ssh/authorized_keys'
+      mkdir -p ~/.ssh && chmod 700 ~/.ssh
+      touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
+      grep -qxF "$PUBKEY" ~/.ssh/authorized_keys || echo "$PUBKEY" >> ~/.ssh/authorized_keys
