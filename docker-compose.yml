@@ -16,6 +16,9 @@ networks:
     internal: true   # seulement Sablier <-> son proxy
 
 volumes:
+  # Base SQLite, sondes et réglages d'Uptime Kuma. Volume nommé : aucune
+  # donnée d'exécution ne traîne dans le repo.
+  uptime-kuma-data:
   # Cache des plugins Traefik. Sans lui, Traefik retélécharge le plugin Sablier
   # depuis GitHub à chaque redémarrage, et ne démarre pas si GitHub est injoignable.
   traefik-plugins:
@@ -89,3 +92,47 @@ services:
     # `proxy` pour que Traefik joigne son API, `socket-sablier` pour Docker.
     networks: [proxy, socket-sablier]
     mem_limit: 96m
+
+  uptime-kuma:
+    image: louislam/uptime-kuma:2.5.9
+    restart: unless-stopped
+    volumes:
+      - uptime-kuma-data:/app/data
+    # Administration : uniquement depuis la VM.
+    #   ssh -L 3001:127.0.0.1:3001 homelab-vm   puis   http://127.0.0.1:3001/
+    ports:
+      - "127.0.0.1:3001:3001"
+    networks: [proxy]
+    mem_limit: 320m
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.kuma-status.entrypoints=web
+      - traefik.http.routers.kuma-status.middlewares=security-headers@file
+      - traefik.http.services.kuma-status.loadbalancer.server.port=3001
+      # Liste blanche de chemins. Uptime Kuma sert son SPA sur `app.get("*")`,
+      # donc sans cette restriction /dashboard renverrait la page d'admin.
+      # Chemins relevés dans le code de la 2.5.9 :
+      #   - server/routers/status-page-router.js : /status/:slug, /status,
+      #     /status-page, /api/status-page/* (config, heartbeat, manifest,
+      #     incident-history, badge) ;
+      #   - server/server.js : les assets du SPA (dist/ servi à la racine,
+      #     donc /assets/* + les icônes de public/) et /upload/* pour un logo.
+      # Volontairement absents : /socket.io/* (tout l'admin, et l'authentification
+      # elle-même, passent par là : sans lui, impossible de se connecter depuis
+      # internet), /dashboard, /setup, /metrics, /api/* hors status-page.
+      - >-
+        traefik.http.routers.kuma-status.rule=Host(`status.albandavid.com`)
+        && ( Path(`/status`)
+        || Path(`/status-page`)
+        || PathPrefix(`/status/`)
+        || PathPrefix(`/api/status-page/`)
+        || PathPrefix(`/assets/`)
+        || PathPrefix(`/upload/`)
+        || Path(`/favicon.ico`)
+        || Path(`/icon.svg`)
+        || Path(`/icon.png`)
+        || Path(`/icon-192x192.png`)
+        || Path(`/icon-512x512.png`)
+        || Path(`/apple-touch-icon.png`)
+        || Path(`/manifest.json`)
+        || Path(`/robots.txt`) )

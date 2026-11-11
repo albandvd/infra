@@ -19,6 +19,11 @@ networks:
 services:
   whoami:
     image: traefik/whoami:v1.12.0
+    # Pas de healthcheck ici : l'image est construite FROM scratch, sans shell.
+    # Sablier avertit donc qu'il ne peut pas détecter la disponibilité et se
+    # rabat sur « conteneur démarré = prêt ». Une vraie démo doit définir un
+    # healthcheck : Sablier garde alors la page d'attente jusqu'à ce qu'elle
+    # réponde vraiment.
     # unless-stopped et non always : quand Sablier arrête le conteneur,
     # Docker doit le laisser arrêté.
     restart: unless-stopped
@@ -32,7 +37,9 @@ services:
       # --- Le middleware Sablier pour cette démo
       - traefik.http.middlewares.whoami-sablier.plugin.sablier.group=whoami
       - traefik.http.middlewares.whoami-sablier.plugin.sablier.sablierUrl=http://sablier:10000
-      - traefik.http.middlewares.whoami-sablier.plugin.sablier.sessionDuration=10m
+      # Surchargeable pour un test sans toucher au fichier :
+      #   WHOAMI_SESSION_DURATION=1m docker compose up -d
+      - traefik.http.middlewares.whoami-sablier.plugin.sablier.sessionDuration=${WHOAMI_SESSION_DURATION:-10m}
       - traefik.http.middlewares.whoami-sablier.plugin.sablier.dynamic.displayName=whoami
       # Les sondes d'Uptime Kuma ne doivent pas réveiller la démo en continu,
       # sinon elle ne s'endort jamais. Elles reçoivent un 200 immédiat.
