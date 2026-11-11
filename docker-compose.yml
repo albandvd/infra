@@ -1,0 +1,44 @@
+networks:
+  proxy:
+    external: true
+  socket-traefik:
+    internal: true   # pas d'accès internet : seulement Traefik <-> son proxy
+  socket-sablier:
+    internal: true   # seulement Sablier <-> son proxy
+
+services:
+  # Lecture seule : Traefik lit la liste des conteneurs et leurs labels
+  socket-proxy-traefik:
+    image: lscr.io/linuxserver/socket-proxy:3.4.7-r0-ls104 
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/run]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - CONTAINERS=1   # lister et inspecter les conteneurs
+      - POST=0         # aucune écriture
+    networks: [socket-traefik]
+
+  # Lecture + démarrer/arrêter : rien d'autre (ni création, ni exec, ni suppression)
+  socket-proxy-sablier:
+    image: lscr.io/linuxserver/socket-proxy:3.4.7-r0-ls104 
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/run]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - CONTAINERS=1
+      - ALLOW_START=1
+      - ALLOW_STOP=1
+      - POST=0
+    networks: [socket-sablier]
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.7  # à figer sur une version précise
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    networks: [proxy]
