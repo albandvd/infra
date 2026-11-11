@@ -1,3 +1,12 @@
+# Socle d'exposition publique du homelab.
+#
+# Chaîne d'une requête :
+#   visiteur -> Cloudflare -> cloudflared (tunnel sortant) -> traefik:80 -> démo
+#
+# Aucun port n'est publié sur l'hôte pour le trafic public : le tunnel est une
+# connexion sortante. Les seuls ports publiés le sont sur 127.0.0.1 de la VM,
+# pour l'administration par tunnel SSH.
+
 networks:
   proxy:
     external: true
@@ -6,10 +15,15 @@ networks:
   socket-sablier:
     internal: true   # seulement Sablier <-> son proxy
 
+volumes:
+  # Cache des plugins Traefik. Sans lui, Traefik retélécharge le plugin Sablier
+  # depuis GitHub à chaque redémarrage, et ne démarre pas si GitHub est injoignable.
+  traefik-plugins:
+
 services:
   # Lecture seule : Traefik lit la liste des conteneurs et leurs labels
   socket-proxy-traefik:
-    image: lscr.io/linuxserver/socket-proxy:3.4.7-r0-ls104 
+    image: lscr.io/linuxserver/socket-proxy:3.4.7-r0-ls104
     restart: unless-stopped
     read_only: true
     tmpfs: [/run]
@@ -19,10 +33,11 @@ services:
       - CONTAINERS=1   # lister et inspecter les conteneurs
       - POST=0         # aucune écriture
     networks: [socket-traefik]
+    mem_limit: 32m
 
   # Lecture + démarrer/arrêter : rien d'autre (ni création, ni exec, ni suppression)
   socket-proxy-sablier:
-    image: lscr.io/linuxserver/socket-proxy:3.4.7-r0-ls104 
+    image: lscr.io/linuxserver/socket-proxy:3.4.7-r0-ls104
     restart: unless-stopped
     read_only: true
     tmpfs: [/run]
@@ -34,11 +49,28 @@ services:
       - ALLOW_STOP=1
       - POST=0
     networks: [socket-sablier]
+    mem_limit: 32m
 
   cloudflared:
-    image: cloudflare/cloudflared:2026.10.7  # à figer sur une version précise
+    image: cloudflare/cloudflared:2026.10.7
     restart: unless-stopped
     command: tunnel --no-autoupdate run
     environment:
       - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
     networks: [proxy]
+    mem_limit: 64m
+
+  traefik:
+    image: traefik:v3.7.18
+    restart: unless-stopped
+    depends_on: [socket-proxy-traefik]
+    # Rien sur 0.0.0.0. Le dashboard n'est joignable que depuis la VM :
+    #   ssh -L 8080:127.0.0.1:8080 homelab-vm   puis   http://127.0.0.1:8080/
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik/dynamic:/etc/traefik/dynamic:ro
+      - traefik-plugins:/plugins-storage
+    networks: [proxy, socket-traefik]
+    mem_limit: 128m

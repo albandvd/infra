@@ -1,0 +1,31 @@
+# Middlewares réutilisables, chargés par le fournisseur fichier.
+# Une démo s'en sert via :
+#   - traefik.http.routers.<nom>.middlewares=security-headers@file
+
+http:
+  middlewares:
+    security-headers:
+      headers:
+        # Pas d'embarquement dans une iframe tierce (clickjacking).
+        frameDeny: true
+        # Le navigateur respecte le Content-Type déclaré, sans le deviner.
+        contentTypeNosniff: true
+        browserXssFilter: true
+        # On ne fuite pas l'URL complète vers les sites tiers.
+        referrerPolicy: strict-origin-when-cross-origin
+        # HSTS : un an. forceSTSHeader est nécessaire car Traefik, derrière
+        # cloudflared, ne voit que du HTTP en clair et n'ajouterait pas
+        # l'en-tête sans cela. C'est bien Cloudflare qui termine le TLS.
+        stsSeconds: 31536000
+        # Volontairement faux : chaque démo est une feuille (test., ospf., ...),
+        # includeSubdomains n'apporterait rien et engagerait leurs sous-domaines
+        # pour un an.
+        stsIncludeSubdomains: false
+        stsPreload: false
+        forceSTSHeader: true
+        # Aucune démo n'a besoin de ces capteurs.
+        permissionsPolicy: "geolocation=(), microphone=(), camera=(), payment=()"
+        customResponseHeaders:
+          # On n'annonce pas la pile technique.
+          Server: ""
+          X-Powered-By: ""

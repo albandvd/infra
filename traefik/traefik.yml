@@ -1,0 +1,60 @@
+# Configuration statique de Traefik (lue une seule fois, au démarrage).
+# Tout ce qui change à chaud vit soit dans les labels Docker, soit dans dynamic/.
+
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+entryPoints:
+  # Le seul point d'entrée public. Aucun port n'est publié sur l'hôte :
+  # cloudflared, qui est sur le réseau `proxy`, parle directement à `traefik:80`.
+  web:
+    address: ":80"
+    forwardedHeaders:
+      # Le trafic arrive toujours de cloudflared, donc d'une IP du réseau `proxy`.
+      # On n'accepte les en-têtes X-Forwarded-* que de là : ailleurs, n'importe quel
+      # visiteur pourrait se forger une fausse IP source dans nos logs.
+      # Doit correspondre au sous-réseau du réseau Docker `proxy` (cf. README).
+      trustedIPs:
+        - 172.18.0.0/16
+
+  # Dashboard et API, publiés uniquement sur 127.0.0.1 de la VM (cf. docker-compose.yml).
+  # `traefik` est le nom réservé par Traefik pour ce point d'entrée.
+  traefik:
+    address: ":8080"
+
+api:
+  dashboard: true
+  # Sans authentification, mais injoignable depuis internet : le port n'est publié
+  # que sur la loopback de la VM, et l'API de Traefik est en lecture seule.
+  insecure: true
+
+providers:
+  # Les démos se déclarent elles-mêmes, par labels, dans leur propre compose.
+  docker:
+    # Jamais le socket brut : on passe par le proxy en lecture seule.
+    endpoint: "tcp://socket-proxy-traefik:2375"
+    # Rien n'est exposé sans l'avoir demandé explicitement (traefik.enable=true).
+    exposedByDefault: false
+    # Réseau utilisé pour joindre les conteneurs quand ils en ont plusieurs.
+    network: proxy
+    watch: true
+
+  # Middlewares réutilisables, et tout ce qui ne dépend pas d'un conteneur.
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+experimental:
+  plugins:
+    # Middleware Sablier (chargé à l'exécution via Yaegi).
+    sablier:
+      moduleName: "github.com/sablierapp/sablier-traefik-plugin"
+      version: "v1.4.0"
+
+log:
+  level: INFO
+
+# Journalise les requêtes : avec forwardedHeaders ci-dessus, ClientHost porte
+# l'IP réelle du visiteur et non celle de cloudflared.
+accessLog: {}
