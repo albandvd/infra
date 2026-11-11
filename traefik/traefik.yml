@@ -17,11 +17,19 @@ entryPoints:
       # Doit correspondre au sous-réseau du réseau Docker `proxy` (cf. README).
       trustedIPs:
         - 172.18.0.0/16
+    http:
+      # Complément indispensable de trustedIPs : Go distingue `X-Forwarded-For`
+      # de `X_Forwarded_For`, mais un backend CGI/PHP/nginx lit les deux comme
+      # la même variable. Sans cela, un visiteur pourrait contourner la
+      # restriction ci-dessus en envoyant la variante avec underscores.
+      aliasHeadersStrategy: delete
 
   # Dashboard et API, publiés uniquement sur 127.0.0.1 de la VM (cf. docker-compose.yml).
   # `traefik` est le nom réservé par Traefik pour ce point d'entrée.
   traefik:
     address: ":8080"
+    http:
+      aliasHeadersStrategy: delete
 
 api:
   dashboard: true

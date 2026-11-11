@@ -1,0 +1,48 @@
+# Démo de test du socle : le plus petit projet possible, mais construit
+# exactement comme le seront les vraies démos du portfolio.
+#
+# Déploiement (la démo est un projet Compose à part entière) :
+#   cd ~/infra/examples/whoami && docker compose up -d
+#
+# À retenir pour copier ce modèle :
+#   - le réseau `proxy` est externe : c'est le socle qui le possède ;
+#   - aucun port publié : Traefik joint le conteneur par le réseau `proxy` ;
+#   - `traefik.enable=true` est obligatoire (exposedByDefault est à false) ;
+#   - `traefik.docker.allownonrunning=true` garde la route vivante quand
+#     Sablier a endormi le conteneur ;
+#   - un `mem_limit`, pour ne pas déborder du budget des démos.
+
+networks:
+  proxy:
+    external: true
+
+services:
+  whoami:
+    image: traefik/whoami:v1.12.0
+    # unless-stopped et non always : quand Sablier arrête le conteneur,
+    # Docker doit le laisser arrêté.
+    restart: unless-stopped
+    networks: [proxy]
+    mem_limit: 32m
+    labels:
+      # --- Sablier : qui gérer, et sous quel nom de groupe
+      - sablier.enable=true
+      - sablier.group=whoami
+
+      # --- Le middleware Sablier pour cette démo
+      - traefik.http.middlewares.whoami-sablier.plugin.sablier.group=whoami
+      - traefik.http.middlewares.whoami-sablier.plugin.sablier.sablierUrl=http://sablier:10000
+      - traefik.http.middlewares.whoami-sablier.plugin.sablier.sessionDuration=10m
+      - traefik.http.middlewares.whoami-sablier.plugin.sablier.dynamic.displayName=whoami
+      # Les sondes d'Uptime Kuma ne doivent pas réveiller la démo en continu,
+      # sinon elle ne s'endort jamais. Elles reçoivent un 200 immédiat.
+      - traefik.http.middlewares.whoami-sablier.plugin.sablier.ignoreUserAgent[0]=(?i)uptime-kuma
+
+      # --- Routage Traefik
+      - traefik.enable=true
+      # Depuis Traefik v3.6 : garde la route déclarée même conteneur arrêté.
+      - traefik.docker.allownonrunning=true
+      - traefik.http.routers.whoami.rule=Host(`test.albandavid.com`)
+      - traefik.http.routers.whoami.entrypoints=web
+      - traefik.http.routers.whoami.middlewares=security-headers@file,whoami-sablier@docker
+      - traefik.http.services.whoami.loadbalancer.server.port=80

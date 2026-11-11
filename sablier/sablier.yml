@@ -1,0 +1,30 @@
+# Sablier : endort les démos inactives, les réveille à la première visite.
+# Sablier cherche ce fichier dans /etc/sablier/ au démarrage.
+
+provider:
+  name: docker
+  # Les conteneurs sont arrêtés (et non supprimés) : l'état du conteneur
+  # et ses labels Traefik survivent à la mise en veille.
+  docker:
+    strategy: stop
+
+server:
+  port: 10000
+  base-path: /
+
+sessions:
+  # Durée d'inactivité par défaut avant extinction.
+  default-duration: 10m
+  # Fréquence à laquelle Sablier vérifie les sessions expirées.
+  expiration-interval: 20s
+
+strategy:
+  # Stratégie `dynamic` : le visiteur reçoit une page d'attente qui se
+  # rafraîchit toute seule pendant le démarrage du conteneur.
+  dynamic:
+    show-details-by-default: true
+    default-theme: hacker-terminal
+    default-refresh-frequency: 5s
+
+logging:
+  level: info

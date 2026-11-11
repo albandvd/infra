@@ -74,3 +74,18 @@ services:
       - traefik-plugins:/plugins-storage
     networks: [proxy, socket-traefik]
     mem_limit: 128m
+
+  sablier:
+    image: sablierapp/sablier:1.18.0
+    restart: unless-stopped
+    command: ["start"]
+    depends_on: [socket-proxy-sablier]
+    environment:
+      # Jamais /var/run/docker.sock : Sablier ne peut que lister, démarrer
+      # et arrêter, à travers son propre proxy.
+      - DOCKER_HOST=tcp://socket-proxy-sablier:2375
+    volumes:
+      - ./sablier/sablier.yml:/etc/sablier/sablier.yml:ro
+    # `proxy` pour que Traefik joigne son API, `socket-sablier` pour Docker.
+    networks: [proxy, socket-sablier]
+    mem_limit: 96m
