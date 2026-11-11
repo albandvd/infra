@@ -50,18 +50,24 @@ services:
       - CONTAINERS=1
       - ALLOW_START=1
       - ALLOW_STOP=1
-      # POST=1 est imposé par Sablier : après avoir arrêté un conteneur, il
-      # appelle POST /containers/{id}/wait pour confirmer l'arrêt, et le proxy
-      # n'a pas de drapeau ALLOW_WAIT pour couvrir ce seul appel. Vérifié ici :
-      # avec POST=0, l'arrêt réussissait mais Sablier journalisait
-      # « cannot wait for container ... 403 Forbidden » à chaque extinction.
-      # Portée : POST=1 reste borné par CONTAINERS=1, donc aux méthodes
-      # d'écriture sur /containers/* uniquement. /images, /networks, /volumes,
-      # /exec, /secrets et /swarm restent refusés (EXEC=0 par défaut).
-      # Contrepartie assumée : sur /containers/*, cela va au-delà de
-      # start/stop (création et suppression deviennent possibles). C'est la
-      # raison d'être du proxy séparé : Traefik, lui, reste en POST=0.
-      - POST=1
+      # POST reste à 0, contrairement à ce que demande la doc de Sablier.
+      #
+      # Pourquoi la doc demande POST=1 : après avoir arrêté un conteneur,
+      # Sablier appelle POST /containers/{id}/wait pour confirmer l'arrêt, et
+      # le proxy n'a pas de drapeau ALLOW_WAIT pour ce seul appel.
+      #
+      # Pourquoi on refuse quand même : avec CONTAINERS=1, POST=1 laisse aussi
+      # passer POST /containers/{id}/exec — mesuré ici, HTTP 201, malgré
+      # EXEC=0, que la règle CONTAINERS prend de vitesse. Un Sablier compromis
+      # obtiendrait alors l'exécution de commandes dans tous les conteneurs de
+      # l'hôte, ce qui annule l'intérêt même du proxy.
+      #
+      # Ce qu'on paie à la place : ALLOW_STOP suffit à arrêter le conteneur
+      # (vérifié : deux cycles complets d'affilée), mais le /wait qui suit est
+      # refusé, donc Sablier journalise deux lignes ERR « cannot wait for
+      # container ... 403 Forbidden » à chaque extinction. C'est cosmétique :
+      # le conteneur est bel et bien arrêté. Voir le README.
+      - POST=0
     networks: [socket-sablier]
     mem_limit: 32m
 
