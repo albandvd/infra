@@ -59,6 +59,9 @@ provision:
       # --- Mises à jour de sécurité automatiques
       apt-get install -y unattended-upgrades
 
+      # --- git : nécessaire au clone du repo infra (provision utilisateur)
+      command -v git > /dev/null || apt-get install -y git
+
       # --- Docker Engine depuis le dépôt officiel (mode classique, pas rootless)
       if ! command -v docker > /dev/null; then
         apt-get update
@@ -112,7 +115,30 @@ provision:
 
       # --- Ta clé SSH publique (celle du MacBook), pour `ssh homelab-vm` via Tailscale.
       #     Une clé publique n'est pas un secret : elle peut rester dans le repo.
-      PUBKEY='grep -qxF "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILv2/hAaTHpR/ji4UJ5QLTm7RRLEzaeKuFENNjG9z7WT homelab-admin" ~/.ssh/authorized_keys || echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILv2/hAaTHpR/ji4UJ5QLTm7RRLEzaeKuFENNjG9z7WT homelab-admin" >> ~/.ssh/authorized_keys'
+      PUBKEY='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILv2/hAaTHpR/ji4UJ5QLTm7RRLEzaeKuFENNjG9z7WT homelab-admin'
       mkdir -p ~/.ssh && chmod 700 ~/.ssh
       touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
       grep -qxF "$PUBKEY" ~/.ssh/authorized_keys || echo "$PUBKEY" >> ~/.ssh/authorized_keys
+
+      # --- Le repo infra : c'est lui qui décrit toute la stack Docker.
+      #     Cloné en HTTPS et traité en lecture seule : la VM ne pousse jamais,
+      #     elle ne fait que suivre `main`.
+      REPO='https://github.com/albandvd/infra.git'
+      if [ ! -d ~/infra/.git ]; then
+        git clone "$REPO" ~/infra
+      else
+        git -C ~/infra fetch --prune origin
+        # --ff-only : si l'historique local a divergé, on échoue franchement
+        # au lieu de fabriquer un merge sur la VM.
+        git -C ~/infra merge --ff-only origin/main
+      fi
+
+      # --- Démarrage de la stack, seulement si tout est en place.
+      #     ~/infra/.env n'est pas versionné (il contient le token du tunnel) :
+      #     il se crée à la main, une fois, d'après .env.example. Sans lui, on ne
+      #     tente rien plutôt que de démarrer une stack à moitié configurée.
+      #     `docker info` sert de garde : au tout premier boot, l'appartenance au
+      #     groupe `docker` n'est pas encore active dans ce shell.
+      if [ -f ~/infra/.env ] && docker info > /dev/null 2>&1; then
+        docker compose -f ~/infra/docker-compose.yml up -d
+      fi
